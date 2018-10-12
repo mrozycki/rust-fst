@@ -1,0 +1,6 @@
+[package]
+name = "rust-fst"
+version = "0.1.0"
+authors = ["Mariusz Rozycki <rozyckim@github.com>"]
+
+[dependencies]
