@@ -8,6 +8,7 @@ struct Transition {
     with: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct FST {
     state_count: usize,
     accepting_states: Vec<usize>,
@@ -32,19 +33,27 @@ fn shift_states(states: Vec<usize>, shift: usize) -> Vec<usize> {
 }
 
 impl FST {
-    pub fn symbol(symbol: char) -> Self {
-        Self {
-            state_count: 2,
-            accepting_states: vec!(1),
-            transitions: vec!(Transition{ from: 0, to: 1, on: Some(symbol), with: Some(symbol.to_string())}),
-        }
-    }
-
     pub fn empty() -> Self {
         Self {
             state_count: 1,
             accepting_states: vec!(0),
             transitions: Vec::new(),
+        }
+    }
+
+    pub fn all_reject() -> Self {
+        Self {
+            state_count: 1,
+            accepting_states: Vec::new(),
+            transitions: Vec::new(),
+        }
+    }
+
+    pub fn symbol(symbol: char) -> Self {
+        Self {
+            state_count: 2,
+            accepting_states: vec!(1),
+            transitions: vec!(Transition{ from: 0, to: 1, on: Some(symbol), with: Some(symbol.to_string())}),
         }
     }
 
@@ -54,6 +63,21 @@ impl FST {
             result = FST::and(result, FST::symbol(c));
         }
         result
+    }
+
+    pub fn one_of_symbols(symbols: Vec<char>) -> Self {
+        let mut result = Self::all_reject();
+        for symbol in symbols {
+            result = FST::or(result, FST::symbol(symbol));
+        }
+        result
+    }
+
+    pub fn consume(mut m: Self) -> Self {
+        m.transitions = m.transitions.into_iter()
+            .map(|mut t| { t.with = None; t })
+            .collect();
+        m
     }
 
     pub fn and(m1: Self, m2: Self) -> Self {
@@ -70,11 +94,28 @@ impl FST {
         }
     }
 
+    pub fn and_optionally(m1: Self, m2: Self) -> Self {
+        let mut new_transitions = m1.transitions;
+        new_transitions.extend(shift_transitions(m2.transitions, m1.state_count));
+        for m1_accepting in &m1.accepting_states {
+            new_transitions.push(Transition{ from: *m1_accepting, to: m1.state_count, on: None, with: None });
+        }
+
+        let mut new_accepting = m1.accepting_states;
+        new_accepting.extend(shift_states(m2.accepting_states, m1.state_count));
+
+        Self {
+            state_count: m1.state_count + m2.state_count,
+            accepting_states: new_accepting,
+            transitions: new_transitions,
+        }
+    }
+
     pub fn wrap(m: Self, name: &str) -> Self {
         let mut new_transitions = shift_transitions(m.transitions, 2);
         new_transitions.push(Transition{ from: 0, to: 2, on: None, with: Some(name.to_string() + " ") });
         for m_accepting in shift_states(m.accepting_states, 2) {
-            new_transitions.push(Transition{ from: m_accepting, to: 1, on: None, with: None });
+            new_transitions.push(Transition{ from: m_accepting, to: 1, on: None, with: Some(" ".to_string()) });
         }
 
         Self {
@@ -100,6 +141,30 @@ impl FST {
         }
     }
 
+    pub fn one_of(ms: Vec<Self>) -> Self {
+        let mut result = Self::all_reject();
+        for m in ms {
+            result = Self::or(m, result);
+        }
+        result
+    }
+
+    pub fn at_least_once(mut m: Self) -> Self {
+        for accepting in &m.accepting_states {
+            m.transitions.push(Transition{ from: *accepting, to: 0, on: None, with: None });
+        }
+        m
+    }
+
+    pub fn repeated(mut m: Self) -> Self {
+        m.transitions = shift_transitions(m.transitions, 1);
+        m.accepting_states = vec!(0);
+        for accepting in &m.accepting_states {
+            m.transitions.push(Transition{ from: *accepting, to: 0, on: None, with: None });
+        }
+        m
+    }
+    
     fn symbol_step(&self, state: usize, path: Vec<String>, on: Option<char>) -> Vec<(usize, Vec<String>)> {
         self.transitions.iter()
             .filter(|t| t.from == state && t.on == on)
@@ -134,6 +199,10 @@ impl FST {
         let mut states = self.epsilon_closure(vec!((0, Vec::new())));
         for symbol in string.chars() {
             states = self.step(states, symbol);
+            for (state, path) in &states {
+                print!("{} {}; ", state, path.join(""));
+            }
+            println!();
         }
 
         states.into_iter()
